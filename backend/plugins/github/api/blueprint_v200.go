@@ -202,29 +202,31 @@ func addGithub(
 	options *tasks.GithubOptions,
 ) (coreModels.PipelineStage, errors.Error) {
 	// construct github(graphql) task
-	if connection.EnableGraphql {
-		// FIXME this need fix when 2 plugins merged
-		p, err := plugin.GetPlugin(`github_graphql`)
-		if err != nil {
-			return nil, err
-		}
-		if pluginGq, ok := p.(plugin.PluginTask); ok {
-			task, err := helper.MakePipelinePlanTask("github_graphql", pluginGq.SubTaskMetas(), entities, options)
-			if err != nil {
-				return nil, err
-			}
-			stage = append(stage, task)
-		} else {
-			return nil, errors.BadInput.New("plugin github_graphql does not support SubTaskMetas")
-		}
-	} else {
-		task, err := helper.MakePipelinePlanTask("github", subtaskMetas, entities, options)
-		if err != nil {
-			return nil, err
-		}
-		stage = append(stage, task)
-	}
-	return stage, nil
+       // Always add both github and github_graphql plugin tasks
+       // Add github task (for REST API, including secret scanning)
+       task, err := helper.MakePipelinePlanTask("github", subtaskMetas, entities, options)
+       if err != nil {
+	       return nil, err
+       }
+       stage = append(stage, task)
+
+       // Add github_graphql task if enabled
+       if connection.EnableGraphql {
+	       p, err := plugin.GetPlugin(`github_graphql`)
+	       if err != nil {
+		       return nil, err
+	       }
+	       if pluginGq, ok := p.(plugin.PluginTask); ok {
+		       taskGq, err := helper.MakePipelinePlanTask("github_graphql", pluginGq.SubTaskMetas(), entities, options)
+		       if err != nil {
+			       return nil, err
+		       }
+		       stage = append(stage, taskGq)
+	       } else {
+		       return nil, errors.BadInput.New("plugin github_graphql does not support SubTaskMetas")
+	       }
+       }
+       return stage, nil
 }
 
 func getApiRepo(

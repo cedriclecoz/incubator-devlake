@@ -30,7 +30,7 @@ import (
 )
 
 func init() {
-	RegisterSubtaskMeta(&ExtractApiCommentsMeta)
+	//RegisterSubtaskMeta(&ExtractApiCommentsMeta)
 }
 
 var ExtractApiCommentsMeta = plugin.SubTaskMeta{

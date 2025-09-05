@@ -121,22 +121,31 @@ func (c *BatchSave) Flush() errors.Error {
 }
 
 func (c *BatchSave) flushWithoutLocking() errors.Error {
-	if c.current == 0 {
-		return nil
-	}
-	clauses := make([]dal.Clause, 0)
-	if c.tableName != "" {
-		clauses = append(clauses, dal.From(c.tableName))
-	}
-	err := c.db.CreateOrUpdate(c.slots.Slice(0, c.current).Interface(), clauses...)
-	if err != nil {
-		c.lastErr = err
-		return err
-	}
-	c.log.Debug("batch save flush total %d records to database", c.current)
-	c.current = 0
-	c.valueIndex = make(map[string]int)
-	return nil
+       if c.current == 0 {
+	       return nil
+       }
+       // Log the primary keys of all records being flushed
+       var pkStrings []string
+       for i := 0; i < c.current; i++ {
+	       slot := c.slots.Index(i).Interface()
+	       key := getKeyValue(slot, c.primaryKey)
+	       pkStrings = append(pkStrings, key)
+       }
+       c.log.Debug("clclc batch save flush: %d records, primary keys: %v", c.current, pkStrings)
+       clauses := make([]dal.Clause, 0)
+       if c.tableName != "" {
+	       clauses = append(clauses, dal.From(c.tableName))
+       }
+       err := c.db.CreateOrUpdate(c.slots.Slice(0, c.current).Interface(), clauses...)
+       if err != nil {
+	       c.lastErr = err
+	       c.log.Error(err, "clclc batch save flush failed for primary keys: %v", pkStrings)
+	       return err
+       }
+       c.log.Debug("clclc batch save flush total %d records to database", c.current)
+       c.current = 0
+       c.valueIndex = make(map[string]int)
+       return nil
 }
 
 // Close would flush the cache and release resources

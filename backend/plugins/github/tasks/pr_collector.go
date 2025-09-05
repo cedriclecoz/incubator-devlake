@@ -34,7 +34,7 @@ import (
 )
 
 func init() {
-	RegisterSubtaskMeta(&CollectApiPullRequestsMeta)
+	//RegisterSubtaskMeta(&CollectApiPullRequestsMeta)
 }
 
 const RAW_PULL_REQUEST_TABLE = "github_api_pull_requests"

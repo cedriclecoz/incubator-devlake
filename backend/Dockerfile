@@ -23,31 +23,20 @@
 #While incubation status is not necessarily a reflection of the completeness or stability of the code,
 #it does indicate that the project has yet to be fully endorsed by the ASF.
 
-FROM --platform=linux/amd64 debian:bookworm as debian-amd64
+FROM debian:bookworm as debian-amd64
 RUN apt-get update
 RUN apt-get install -y libssh2-1-dev libssl-dev zlib1g-dev
 
-FROM --platform=linux/arm64 debian:bookworm as debian-arm64
-RUN apt-get update
-RUN apt-get install -y libssh2-1-dev libssl-dev zlib1g-dev
+FROM golang:1.20.5-bookworm as builder
 
-FROM --platform=$BUILDPLATFORM golang:1.20.5-bookworm as builder
-
-# docker build --build-arg GOPROXY=https://goproxy.io,direct -t mericodev/lake .
 ARG GOPROXY=
-# docker build --build-arg HTTPS_PROXY=http://localhost:4780 -t mericodev/lake .
 ARG HTTP_PROXY=
 ARG HTTPS_PROXY=
 
 RUN apt-get update
 RUN apt-get install -y gcc binutils libfindbin-libs-perl cmake libssh2-1-dev libssl-dev zlib1g-dev
 
-RUN if [ "$(arch)" != "aarch64" ] ; then \
-        apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu ; \
-    fi
-RUN if [ "$(arch)" != "x86_64" ] ; then \
-        apt-get install -y gcc-x86-64-linux-gnu binutils-x86-64-linux-gnu ; \
-    fi
+RUN apt-get install -y gcc-x86-64-linux-gnu binutils-x86-64-linux-gnu
 
 RUN go install github.com/vektra/mockery/v2@v2.20.0
 RUN go install github.com/swaggo/swag/cmd/swag@v1.16.1
@@ -56,29 +45,15 @@ COPY --from=debian-amd64 /usr/include /rootfs-amd64/usr/include
 COPY --from=debian-amd64 /usr/lib/x86_64-linux-gnu /rootfs-amd64/usr/lib/x86_64-linux-gnu
 COPY --from=debian-amd64 /lib/x86_64-linux-gnu /rootfs-amd64/lib/x86_64-linux-gnu
 
-COPY --from=debian-arm64 /usr/include /rootfs-arm64/usr/include
-COPY --from=debian-arm64 /usr/lib/aarch64-linux-gnu /rootfs-arm64/usr/lib/aarch64-linux-gnu
-COPY --from=debian-arm64 /lib/aarch64-linux-gnu /rootfs-arm64/lib/aarch64-linux-gnu
-
-
-RUN for arch in aarch64 x86_64 ; do \
-        mkdir -p /tmp/build/${arch} && cd /tmp/build/${arch} && \
-        wget https://github.com/libgit2/libgit2/archive/refs/tags/v1.3.2.tar.gz -O - | tar -xz && \
-        cd libgit2-1.3.2 && \
-        mkdir build && cd build && \
-        if [ "$arch" = "aarch64" ] ; then \
-            cmake .. -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
-                -DBUILD_SHARED_LIBS=ON -DCMAKE_SYSROOT=/rootfs-arm64 \
-                -DCMAKE_INSTALL_PREFIX=/usr/local/deps/${arch} ; \
-        elif [ "$arch" = "x86_64" ] ; then \
-            cmake .. -DCMAKE_C_COMPILER=x86_64-linux-gnu-gcc \
-                -DBUILD_SHARED_LIBS=ON -DCMAKE_SYSROOT=/rootfs-amd64 \
-                -DCMAKE_INSTALL_PREFIX=/usr/local/deps/${arch} ; \
-        fi && \
-        make -j install ; \
-    done
-
-
+# Build only x86_64 libgit2
+RUN mkdir -p /tmp/build/x86_64 && cd /tmp/build/x86_64 && \
+    wget https://github.com/libgit2/libgit2/archive/refs/tags/v1.3.2.tar.gz -O - | tar -xz && \
+    cd libgit2-1.3.2 && \
+    mkdir build && cd build && \
+    cmake .. -DCMAKE_C_COMPILER=x86_64-linux-gnu-gcc \
+        -DBUILD_SHARED_LIBS=ON -DCMAKE_SYSROOT=/rootfs-amd64 \
+        -DCMAKE_INSTALL_PREFIX=/usr/local/deps/x86_64 && \
+    make -j install
 FROM builder as build
 
 WORKDIR /app
@@ -91,15 +66,9 @@ ARG SHA=
 ARG GO_PLUGINS=
 
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    if [ "$TARGETPLATFORM" = "linux/arm64" ] ; then \
-        ln -s /usr/local/deps/aarch64 /usr/local/deps/target && \
-        export CC=aarch64-linux-gnu-gcc && \
-        export GOARCH=arm64 ; \
-    else \
-        ln -s /usr/local/deps/x86_64 /usr/local/deps/target && \
-        export CC=x86_64-linux-gnu-gcc && \
-        export GOARCH=amd64 ; \
-    fi && \
+    ln -s /usr/local/deps/x86_64 /usr/local/deps/target && \
+    export CC=x86_64-linux-gnu-gcc && \
+    export GOARCH=amd64 ; \
     export PKG_CONFIG_PATH=/usr/local/deps/target/lib/pkgconfig && \
     export CGO_ENABLED=1 &&\
     DEVLAKE_PLUGINS="$GO_PLUGINS" make all
@@ -134,6 +103,7 @@ EXPOSE 8080
 
 RUN useradd -ms /bin/bash -d /app devlake -u 1010
 RUN chown -R devlake:devlake /etc/ssl/certs
+RUN chown -R devlake:devlake /app/python /app/logs ||:
 USER devlake
 ENV PYTHONUNBUFFERED=1
 
@@ -143,12 +113,14 @@ RUN mkdir logs
 VOLUME /app/logs
 
 # Setup Python
-COPY python/ /app/python/
-RUN python3 -m pip install --no-cache --upgrade pip setuptools && \
-    python3 -m pip install --no-cache -r python/requirements.txt && \
-    python3 -m pip install --upgrade pip
+COPY --chown=devlake:devlake python/ /app/python/
 
-# Setup Python Poetry package manager
+RUN python3 -m pip install --no-cache --upgrade pip setuptools
+RUN python3 -m pip install --upgrade pip
+RUN python3 -m pip install --no-cache -r python/requirements.txt
+
+
+# # Setup Python Poetry package manager
 RUN curl -sSL https://install.python-poetry.org | python3 -
 ENV PATH="$PATH:/app/.local/bin"
 
@@ -162,13 +134,14 @@ ARG DEBUG=
 # libraries
 ENV LD_LIBRARY_PATH=/app/libs
 RUN mkdir -p /app/libs
-COPY --from=build /usr/local/deps/target/lib/*.so* /app/libs
-COPY --from=build /go/bin /usr/bin
+COPY --from=build --chown=devlake:devlake /usr/local/deps/target/lib/*.so* /app/libs
+COPY --from=build --chown=devlake:devlake /go/bin /usr/bin
 RUN ldconfig -vn /app/libs
 
 # apps
-COPY --from=build /app/bin /app/bin
-COPY --from=build /app/resources /app/resources
+COPY --from=build --chown=devlake:devlake /app/bin /app/bin
+COPY --from=build --chown=devlake:devlake /app/resources /app/resources
+RUN chown -R devlake:devlake /app/resources
 
 ENV PATH="/app/bin:${PATH}"
 ENV DEBUG="$DEBUG"
@@ -177,4 +150,5 @@ ENV DEBUG="$DEBUG"
 ENTRYPOINT ["/usr/bin/tini", "--"]
 
 CMD ["lake"]
+
 
