@@ -13,8 +13,8 @@ type GithubSecretScanningAlert struct {
 		common.Model
 		common.RawDataOrigin
 
-	RepoId      string     `gorm:"index;type:varchar(255)" json:"repo_id"`
-	AlertNumber int        `gorm:"index" json:"alert_number"`
+	RepoId      string     `gorm:"primaryKey;type:varchar(255)" json:"repo_id"`
+	AlertNumber int        `gorm:"primaryKey" json:"alert_number"`
 	SecretType  string     `gorm:"type:varchar(255)" json:"secret_type"`
 	State       string     `gorm:"type:varchar(50)" json:"state"`
 	CreatedAt   time.Time  `json:"created_at"`

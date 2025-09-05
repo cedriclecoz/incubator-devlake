@@ -24,6 +24,8 @@ import (
 // All return all the migration scripts
 func All() []plugin.MigrationScript {
 	return []plugin.MigrationScript{
+		   new(addSecretScanningAlertsTable),
+		   new(addRawGithubApiSecretScanningAlertsTable),
 		new(addInitTables),
 		new(addGithubRunsTable),
 		new(addGithubJobsTable),

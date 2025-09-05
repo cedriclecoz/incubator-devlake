@@ -170,25 +170,11 @@ func ExtractSecretScanningAlerts(taskCtx plugin.SubTaskContext) errors.Error {
 			   if v, ok := data["push_protection_bypass_request_html_url"].(string); ok {
 				   alert.PushProtectionBypassRequestHtmlUrl = v
 			   }
-			   // Log the alert's primary keys before returning
-			   fmt.Printf("clclc  ALERT TO UPSERT: repo_id=%s, alert_number=%d\n", alert.RepoId, alert.AlertNumber)
-			   fmt.Printf("clclc  ALERT STRUCT: %+v\n", alert)
-			   // Log the number of alerts being returned (always 1 here, but for consistency)
-			   fmt.Printf("clclc  Extract function returning %d alert(s)\n", 1)
 			   return []interface{}{alert}, nil
 		   },
 	})
 	if err != nil {
 		return err
 	}
-		// Add detailed logging before and after Execute (batch save/upsert)
-		fmt.Printf("clclcl: About to call extractor.Execute (batch save/upsert)\n")
-		result := extractor.Execute()
-		if result != nil {
-			fmt.Printf("clclcl: extractor.Execute returned error: %v\n", result)
-		} else {
-			fmt.Printf("clclcl: extractor.Execute completed successfully\n")
-		}
-		fmt.Printf("clclcl: ExtractSecretScanningAlerts exit, return value: %v\n", result)
-		return result
+	return extractor.Execute()
 }
