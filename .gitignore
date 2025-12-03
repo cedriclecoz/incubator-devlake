@@ -1,4 +1,8 @@
 # Logs
+mysql.sh
+internal
+Github.json
+
 logs
 *.log
 npm-debug.log*
