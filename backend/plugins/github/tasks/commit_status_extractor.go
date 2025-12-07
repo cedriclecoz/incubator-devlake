@@ -112,6 +112,7 @@ func ExtractApiCommitStatuses(taskCtx plugin.SubTaskContext) errors.Error {
 			githubCommitStatus := &models.GithubCommitStatus{
 				ConnectionId:    data.Options.ConnectionId,
 				GithubId:        apiCommitStatus.Id,
+				RepoId:          uint64(data.Options.GithubId),
 				CommitSha:       commit.CommitSha,
 				Context:         apiCommitStatus.Context,
 				State:           apiCommitStatus.State,

@@ -32,26 +32,22 @@ import (
 )
 
 func init() {
-	RegisterSubtaskMeta(&CollectApiCommitStatusesMeta)
+	RegisterSubtaskMeta(&CollectApiCheckRunsMeta)
 }
 
-const RAW_COMMIT_STATUS_TABLE = "github_api_commit_statuses"
+const RAW_CHECK_RUN_TABLE = "github_api_check_runs"
 
-var CollectApiCommitStatusesMeta = plugin.SubTaskMeta{
-	Name:             "Collect Commit Statuses",
-	EntryPoint:       CollectApiCommitStatuses,
+var CollectApiCheckRunsMeta = plugin.SubTaskMeta{
+	Name:             "Collect Check Runs",
+	EntryPoint:       CollectApiCheckRuns,
 	EnabledByDefault: true,
-	Description:      "Collect commit status checks data from Github api for PR commits",
+	Description:      "Collect check runs data from Github api for PR commits",
 	DomainTypes:      []string{plugin.DOMAIN_TYPE_CICD, plugin.DOMAIN_TYPE_CODE_REVIEW},
 	DependencyTables: []string{models.GithubPrCommit{}.TableName()},
-	ProductTables:    []string{RAW_COMMIT_STATUS_TABLE},
+	ProductTables:    []string{RAW_CHECK_RUN_TABLE},
 }
 
-type SimpleCommit struct {
-	CommitSha string
-}
-
-func CollectApiCommitStatuses(taskCtx plugin.SubTaskContext) errors.Error {
+func CollectApiCheckRuns(taskCtx plugin.SubTaskContext) errors.Error {
 	db := taskCtx.GetDal()
 	data := taskCtx.GetData().(*GithubTaskData)
 
@@ -61,16 +57,14 @@ func CollectApiCommitStatuses(taskCtx plugin.SubTaskContext) errors.Error {
 			ConnectionId: data.Options.ConnectionId,
 			Name:         data.Options.Name,
 		},
-		Table: RAW_COMMIT_STATUS_TABLE,
+		Table: RAW_CHECK_RUN_TABLE,
 	})
 	if err != nil {
 		return err
 	}
 
-	// Query PR commits to get the list of commit SHAs to collect statuses for
-	// We want to collect statuses for all PR commits, not just recently updated PRs,
-	// because commit statuses can change independently of PR updates (CI/CD re-runs).
-	// For open PRs, always collect. For closed/merged PRs, only collect if recently updated.
+	// Query PR commits to get the list of commit SHAs to collect check runs for
+	// Collect for open PRs and recently updated closed/merged PRs (to catch status updates)
 	clauses := []dal.Clause{
 		dal.Select("commit_sha"),
 		dal.From(models.GithubPrCommit{}.TableName()),
@@ -94,7 +88,7 @@ func CollectApiCommitStatuses(taskCtx plugin.SubTaskContext) errors.Error {
 		)
 	}
 
-	taskCtx.GetLogger().Info("Querying PR commits for statuses in repo_id=%d, connection_id=%d, incremental=%v",
+	taskCtx.GetLogger().Info("Querying PR commits for check runs in repo_id=%d, connection_id=%d, incremental=%v",
 		data.Options.GithubId, data.Options.ConnectionId, apiCollector.IsIncremental())
 
 	cursor, err := db.Cursor(clauses...)
@@ -107,15 +101,14 @@ func CollectApiCommitStatuses(taskCtx plugin.SubTaskContext) errors.Error {
 		return err
 	}
 
-	// Debug: Log first few items from iterator to verify it's working
-	taskCtx.GetLogger().Info("Iterator created for commit status collection")
+	taskCtx.GetLogger().Info("Iterator created for check runs collection")
 
 	err = apiCollector.InitCollector(helper.ApiCollectorArgs{
 		ApiClient: data.ApiClient,
 		PageSize:  100,
 		Input:     iterator,
 
-		UrlTemplate: "repos/{{ .Params.Name }}/commits/{{ .Input.CommitSha }}/statuses",
+		UrlTemplate: "repos/{{ .Params.Name }}/commits/{{ .Input.CommitSha }}/check-runs",
 
 		Query: func(reqData *helper.RequestData) (url.Values, errors.Error) {
 			query := url.Values{}
@@ -125,12 +118,15 @@ func CollectApiCommitStatuses(taskCtx plugin.SubTaskContext) errors.Error {
 		},
 
 		ResponseParser: func(res *http.Response) ([]json.RawMessage, errors.Error) {
-			var items []json.RawMessage
-			err := helper.UnmarshalResponse(res, &items)
+			// GitHub check-runs API returns {check_runs: [...]} not a direct array
+			var body struct {
+				CheckRuns []json.RawMessage `json:"check_runs"`
+			}
+			err := helper.UnmarshalResponse(res, &body)
 			if err != nil {
 				return nil, err
 			}
-			return items, nil
+			return body.CheckRuns, nil
 		},
 	})
 

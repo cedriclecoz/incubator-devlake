@@ -26,6 +26,7 @@ import (
 type GithubCommitStatus struct {
 	ConnectionId  uint64 `gorm:"primaryKey"`
 	GithubId      int64  `gorm:"primaryKey"`                   // GitHub's unique status ID
+	RepoId        uint64 `gorm:"index"`                        // Repository ID for filtering
 	CommitSha     string `gorm:"index;type:varchar(40)"`       // Index for querying by commit
 	Context       string `gorm:"index;type:varchar(255)"`      // The status context (e.g., "continuous-integration/jenkins")
 	State         string `gorm:"type:varchar(100)"`            // Status state: error, failure, pending, success

@@ -31,6 +31,7 @@ type addCommitStatusTable struct{}
 type commitStatus20251203 struct {
 	ConnectionId  uint64 `gorm:"primaryKey"`
 	GithubId      int64  `gorm:"primaryKey"`
+	RepoId        uint64 `gorm:"index"`
 	CommitSha     string `gorm:"index;type:varchar(40)"`
 	Context       string `gorm:"index;type:varchar(255)"`
 	State         string `gorm:"type:varchar(100)"`
@@ -49,10 +50,21 @@ func (commitStatus20251203) TableName() string {
 }
 
 func (u *addCommitStatusTable) Up(basicRes context.BasicRes) errors.Error {
-	return migrationhelper.AutoMigrateTables(
+	err := migrationhelper.AutoMigrateTables(
 		basicRes,
 		&commitStatus20251203{},
 	)
+	if err != nil {
+		return err
+	}
+
+	// Add composite index for optimized GROUP BY queries
+	db := basicRes.GetDal()
+	err = db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_commit_statuses_composite
+		ON _tool_github_commit_statuses(commit_sha, connection_id, context, github_updated_at, github_id)
+	`)
+	return err
 }
 
 func (*addCommitStatusTable) Version() uint64 {
