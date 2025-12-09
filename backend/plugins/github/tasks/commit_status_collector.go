@@ -18,17 +18,17 @@ limitations under the License.
 package tasks
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"reflect"
 
-	"github.com/apache/incubator-devlake/core/errors"
 	"github.com/apache/incubator-devlake/core/dal"
+	"github.com/apache/incubator-devlake/core/errors"
 	helper "github.com/apache/incubator-devlake/helpers/pluginhelper/api"
 	"github.com/apache/incubator-devlake/core/plugin"
-	"github.com/apache/incubator-devlake/plugins/github/models"
 )
 
 func init() {
@@ -43,7 +43,7 @@ var CollectApiCommitStatusesMeta = plugin.SubTaskMeta{
 	EnabledByDefault: true,
 	Description:      "Collect commit status checks data from Github api for PR commits",
 	DomainTypes:      []string{plugin.DOMAIN_TYPE_CICD, plugin.DOMAIN_TYPE_CODE_REVIEW},
-	DependencyTables: []string{models.GithubPrCommit{}.TableName()},
+	DependencyTables: []string{RAW_PULL_REQUEST_TABLE, RAW_PR_COMMIT_TABLE},
 	ProductTables:    []string{RAW_COMMIT_STATUS_TABLE},
 }
 
@@ -67,40 +67,48 @@ func CollectApiCommitStatuses(taskCtx plugin.SubTaskContext) errors.Error {
 		return err
 	}
 
-	// Query PR commits to get the list of commit SHAs to collect statuses for
-	// We want to collect statuses for all PR commits, not just recently updated PRs,
-	// because commit statuses can change independently of PR updates (CI/CD re-runs).
-	// For open PRs, always collect. For closed/merged PRs, only collect if recently updated.
-	clauses := []dal.Clause{
-		dal.Select("commit_sha"),
-		dal.From(models.GithubPrCommit{}.TableName()),
-		dal.Join(`LEFT JOIN _tool_github_pull_requests pr ON
-			_tool_github_pull_request_commits.connection_id = pr.connection_id AND
-			_tool_github_pull_request_commits.pull_request_id = pr.github_id`),
-		dal.Where("_tool_github_pull_request_commits.connection_id = ? AND pr.repo_id = ?",
-			data.Options.ConnectionId, data.Options.GithubId),
-		dal.Groupby("commit_sha"),
-	}
+	// Query commits from recently updated PRs for truly incremental collection
+	// Use the incremental time window to filter PR commits, matching the PR commit collector's behavior
+	rawDataParams := fmt.Sprintf(`{"ConnectionId":%d,"Name":"%s"}`, data.Options.ConnectionId, data.Options.Name)
 
-	// If incremental, filter to only open PRs or recently updated ones
-	if apiCollector.IsIncremental() && apiCollector.GetSince() != nil {
-		clauses = append(clauses,
-			dal.Where("pr.state = ? OR pr.github_updated_at > ?", "open", apiCollector.GetSince()),
-		)
-	} else {
-		// On full sync, only collect for open PRs to avoid excessive API calls
-		clauses = append(clauses,
-			dal.Where("pr.state = ?", "open"),
-		)
-	}
-
-	taskCtx.GetLogger().Info("Querying PR commits for statuses in repo_id=%d, connection_id=%d, incremental=%v",
-		data.Options.GithubId, data.Options.ConnectionId, apiCollector.IsIncremental())
-
-	cursor, err := db.Cursor(clauses...)
+	// Check if we have any existing commit statuses for this repo
+	// If not, do a full collection even if incremental mode is enabled
+	var existingCount int64
+	existingCount, err = db.Count(dal.From("_tool_github_commit_statuses"),
+		dal.Where("connection_id = ? AND repo_id = ?", data.Options.ConnectionId, data.Options.GithubId))
 	if err != nil {
 		return err
 	}
+
+	var cursor *sql.Rows
+	// If incremental AND we already have data, only get commits from the current incremental window
+	if apiCollector.IsIncremental() && apiCollector.GetSince() != nil && existingCount > 0 {
+		cursor, err = db.RawCursor(`
+			SELECT DISTINCT JSON_UNQUOTE(JSON_EXTRACT(CONVERT(prc.data USING utf8mb4), '$.sha')) as commit_sha
+			FROM _raw_github_api_pull_request_commits prc
+			WHERE prc.params = ?
+				AND prc.created_at >= ?
+		`, rawDataParams, apiCollector.GetSince())
+		taskCtx.GetLogger().Info("Incremental collection: querying commits since %v", apiCollector.GetSince())
+	} else {
+		// Full collection: get all PR commits for this repo (first run or forced full)
+		cursor, err = db.RawCursor(`
+			SELECT DISTINCT JSON_UNQUOTE(JSON_EXTRACT(CONVERT(data USING utf8mb4), '$.sha')) as commit_sha
+			FROM _raw_github_api_pull_request_commits
+			WHERE params = ?
+		`, rawDataParams)
+		if existingCount == 0 {
+			taskCtx.GetLogger().Info("First run detected (no existing data), doing full collection for all PR commits")
+		} else {
+			taskCtx.GetLogger().Info("Full collection mode")
+		}
+	}
+	if err != nil {
+		return err
+	}
+
+	taskCtx.GetLogger().Info("Querying PR commits for statuses from raw data in repo_id=%d, connection_id=%d, incremental=%v",
+		data.Options.GithubId, data.Options.ConnectionId, apiCollector.IsIncremental())
 
 	iterator, err := helper.NewDalCursorIterator(db, cursor, reflect.TypeOf(SimpleCommit{}))
 	if err != nil {

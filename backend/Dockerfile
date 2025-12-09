@@ -63,6 +63,7 @@ ENV GOBIN=/app/bin
 ARG TARGETPLATFORM
 ARG TAG=
 ARG SHA=
+ARG VERSION=
 ARG GO_PLUGINS=
 
 RUN --mount=type=cache,target=/root/.cache/go-build \
@@ -71,6 +72,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     export GOARCH=amd64 ; \
     export PKG_CONFIG_PATH=/usr/local/deps/target/lib/pkgconfig && \
     export CGO_ENABLED=1 &&\
+    export VERSION="${VERSION}" &&\
     DEVLAKE_PLUGINS="$GO_PLUGINS" make all
 
 # remove symlink in lib, we will recreate in final image

@@ -24,11 +24,9 @@ import (
 	"net/url"
 	"reflect"
 
-	"github.com/apache/incubator-devlake/core/dal"
 	"github.com/apache/incubator-devlake/core/errors"
 	"github.com/apache/incubator-devlake/core/plugin"
 	"github.com/apache/incubator-devlake/helpers/pluginhelper/api"
-	"github.com/apache/incubator-devlake/plugins/github/models"
 )
 
 func init() {
@@ -43,7 +41,7 @@ var CollectJobsMeta = plugin.SubTaskMeta{
 	EnabledByDefault: true,
 	Description:      "Collect Jobs data from Github action api, supports both timeFilter and diffSync.",
 	DomainTypes:      []string{plugin.DOMAIN_TYPE_CICD},
-	DependencyTables: []string{models.GithubRun{}.TableName()},
+	DependencyTables: []string{RAW_RUN_TABLE},
 	ProductTables:    []string{RAW_JOB_TABLE},
 }
 
@@ -64,22 +62,19 @@ func CollectJobs(taskCtx plugin.SubTaskContext) errors.Error {
 		return err
 	}
 
-	// load workflow_runs that need jobs collection
-	clauses := []dal.Clause{
-		dal.Select("id"),
-		dal.From(&models.GithubRun{}),
-		dal.Where(
-			"repo_id = ? AND connection_id = ?",
-			data.Options.GithubId, data.Options.ConnectionId,
-		),
-	}
-	if apiCollector.IsIncremental() && apiCollector.GetSince() != nil {
-		clauses = append(clauses, dal.Where("github_updated_at > ?", apiCollector.GetSince()))
-	}
-	cursor, err := db.Cursor(clauses...)
+	// Query workflow runs from raw data table (collected in this run) instead of the GithubRun table
+	// This ensures we only collect jobs for runs that were actually collected/updated in this execution
+	// Use raw SQL to extract ID from JSON data field
+	rawDataParams := fmt.Sprintf(`{"ConnectionId":%d,"Name":"%s"}`, data.Options.ConnectionId, data.Options.Name)
+	cursor, err := db.RawCursor(`
+		SELECT DISTINCT CAST(JSON_EXTRACT(data, '$.id') AS SIGNED) as id
+		FROM _raw_github_api_runs
+		WHERE params = ?
+	`, rawDataParams)
 	if err != nil {
 		return err
 	}
+
 	iterator, err := api.NewDalCursorIterator(db, cursor, reflect.TypeOf(SimpleGithubRun{}))
 	if err != nil {
 		return err

@@ -51,19 +51,23 @@ func ConvertCommitStatuses(taskCtx plugin.SubTaskContext) errors.Error {
 	db := taskCtx.GetDal()
 	data := taskCtx.GetData().(*GithubTaskData)
 
-	// Query to get only the latest status for each commit+context combination
-	// We use a subquery to find the max github_updated_at for each commit_sha+context pair
+	// Query to get only the latest status for each commit+context combination for this repo
+	// Use window function for better performance than GROUP BY + JOIN
 	cursor, err := db.Cursor(
 		dal.From(&models.GithubCommitStatus{}),
 		dal.Join(`INNER JOIN (
-			SELECT commit_sha, context, MAX(github_updated_at) as latest_update
+			SELECT github_id, commit_sha, context,
+				ROW_NUMBER() OVER (
+					PARTITION BY commit_sha, context
+					ORDER BY github_updated_at DESC, github_id DESC
+				) as rn
 			FROM _tool_github_commit_statuses
-			WHERE connection_id = ?
-			GROUP BY commit_sha, context
-		) latest ON _tool_github_commit_statuses.commit_sha = latest.commit_sha
-			AND _tool_github_commit_statuses.context = latest.context
-			AND _tool_github_commit_statuses.github_updated_at = latest.latest_update`, data.Options.ConnectionId),
-		dal.Where("_tool_github_commit_statuses.connection_id = ?", data.Options.ConnectionId),
+			WHERE connection_id = ? AND repo_id = ?
+		) latest ON _tool_github_commit_statuses.github_id = latest.github_id
+			AND latest.rn = 1`,
+			data.Options.ConnectionId, data.Options.GithubId),
+		dal.Where("_tool_github_commit_statuses.connection_id = ? AND _tool_github_commit_statuses.repo_id = ?",
+			data.Options.ConnectionId, data.Options.GithubId),
 	)
 	if err != nil {
 		return err
