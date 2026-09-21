@@ -348,6 +348,35 @@ func TestBootstrapStateFromCollectorStateIfNeeded(t *testing.T) {
 	})
 }
 
+func TestNewSubtaskStateManagerSkipBootstrapFromCollectorState(t *testing.T) {
+	notFoundErr := errors.Default.New("record not found")
+	mockDal := new(mockdal.Dal)
+	mockDal.On("First", mock.Anything, mock.Anything).Return(notFoundErr).Once()
+	mockDal.On("IsErrorNotFound", notFoundErr).Return(true).Once()
+
+	mockTaskCtx := new(mockplugin.TaskContext)
+	mockTaskCtx.On("SyncPolicy").Return(&models.SyncPolicy{})
+	mockTaskCtx.On("GetName").Return("github")
+
+	mockSubtaskCtx := new(mockplugin.SubTaskContext)
+	mockSubtaskCtx.On("TaskContext").Return(mockTaskCtx)
+	mockSubtaskCtx.On("GetName").Return("Convert Pull Requests")
+	mockSubtaskCtx.On("GetDal").Return(mockDal)
+
+	stateManager, err := NewSubtaskStateManager(&SubtaskCommonArgs{
+		SubTaskContext:                  mockSubtaskCtx,
+		Table:                           "github_api_pull_requests",
+		Params:                          "whatever",
+		SkipBootstrapFromCollectorState: true,
+	})
+	assert.Nil(t, err)
+	assert.NotNil(t, stateManager)
+	assert.False(t, stateManager.IsIncremental())
+	assert.Nil(t, stateManager.GetSince())
+	mockDal.AssertNotCalled(t, "HasTable", mock.Anything)
+	mockDal.AssertExpectations(t)
+}
+
 func TestIsStateTableNotReadyError(t *testing.T) {
 	assert.False(t, isStateTableNotReadyError(nil))
 	assert.True(t, isStateTableNotReadyError(errors.Default.New("Error 1146 (42S02): Table 'lake._devlake_collector_latest_state' doesn't exist")))
