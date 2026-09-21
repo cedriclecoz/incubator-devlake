@@ -33,10 +33,11 @@ import (
 // SubtaskCommonArgs is a struct that contains the common arguments for a subtask
 type SubtaskCommonArgs struct {
 	plugin.SubTaskContext
-	Table         string // raw table name
-	Params        any    // for filtering rows belonging to the scope (jira board, github repo) of the subtask
-	SubtaskConfig any    // for determining whether the subtask should run in Incremental or Full-Sync mode by comparing with the previous config to see if it changed
-	BatchSize     int    // batch size for saving data
+	Table                           string // raw table name
+	Params                          any    // for filtering rows belonging to the scope (jira board, github repo) of the subtask
+	SubtaskConfig                   any    // for determining whether the subtask should run in Incremental or Full-Sync mode by comparing with the previous config to see if it changed
+	SkipBootstrapFromCollectorState bool   // disables inheriting incremental state from the collector when the subtask has no saved state yet
+	BatchSize                       int    // batch size for saving data
 }
 
 func (args *SubtaskCommonArgs) GetRawDataTable() string {
@@ -89,9 +90,11 @@ func NewSubtaskStateManager(args *SubtaskCommonArgs) (stateManager *SubtaskState
 	if err != nil {
 		return
 	}
-	preState, err = bootstrapStateFromCollectorStateIfNeeded(db, preState, args)
-	if err != nil {
-		return
+	if !args.SkipBootstrapFromCollectorState {
+		preState, err = bootstrapStateFromCollectorStateIfNeeded(db, preState, args)
+		if err != nil {
+			return
+		}
 	}
 
 	isIncremental, since := calculateStateManagerIncrementalMode(syncPolicy, preState, utils.ToJsonString(args.SubtaskConfig))

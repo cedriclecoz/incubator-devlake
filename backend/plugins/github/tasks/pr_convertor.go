@@ -57,8 +57,9 @@ func ConvertPullRequests(taskCtx plugin.SubTaskContext) errors.Error {
 
 	converter, err := api.NewStatefulDataConverter(&api.StatefulDataConverterArgs[models.GithubPullRequest]{
 		SubtaskCommonArgs: &api.SubtaskCommonArgs{
-			SubTaskContext: taskCtx,
-			Table:          RAW_PULL_REQUEST_TABLE,
+			SubTaskContext:                  taskCtx,
+			Table:                           RAW_PULL_REQUEST_TABLE,
+			SkipBootstrapFromCollectorState: true,
 			Params: GithubApiParams{
 				ConnectionId: data.Options.ConnectionId,
 				Name:         data.Options.Name,
